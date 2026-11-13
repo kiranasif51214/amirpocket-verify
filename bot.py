@@ -132,8 +132,13 @@ async def login_flow(api: Api, client: TelegramClient, cfg: dict):
     password = cfg.get("password") or None
     while True:
         try:
-            await client.send_code_request(phone)
-            LOG(f"Login code requested for {phone}")
+            sent_code = await client.send_code_request(phone)
+            LOG(
+                f"Login code requested for {phone} — delivery: "
+                f"{type(sent_code.type).__name__}, fallback: "
+                f"{type(sent_code.next_type).__name__ if sent_code.next_type else None}, "
+                f"timeout: {getattr(sent_code, 'timeout', None)}s"
+            )
             break
         except Exception as e:  # noqa: BLE001
             LOG(f"send_code_request failed: {e}")
