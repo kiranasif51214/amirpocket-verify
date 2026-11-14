@@ -27,3 +27,19 @@ async def authorize_session(api, client, config, session, explicit, login_flow):
     if session:
         await api.post_bridge({"session_string": None, "status": "restart_needed"})
     await login_flow(api, client, config)
+
+
+SESSION_DUPLICATED_MESSAGE = (
+    "Telegram revoked TG_SESSION because it was used from two places at the same time "
+    "(AuthKeyDuplicatedError). This session can never work again. Stop every other "
+    "helper/computer using it, generate a NEW session with generate_session.py, replace "
+    "TG_SESSION in Railway, and keep only one replica running."
+)
+
+
+async def report_duplicated_session(api):
+    """Tell the admin panel the session is dead; never retry it (retrying cannot help)."""
+    try:
+        await api.post_bridge({"session_string": None, "status": "restart_needed"})
+    except Exception:  # noqa: BLE001
+        pass

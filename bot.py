@@ -24,23 +24,34 @@ Optional:
 
 import asyncio
 import os
+import signal
 import time
 from datetime import datetime, timezone
 
 import aiohttp
 from telethon import TelegramClient, events
 from telethon.errors import (
+    AuthKeyDuplicatedError,
     PhoneCodeExpiredError,
     PhoneCodeInvalidError,
     SessionPasswordNeededError,
 )
 from telethon.sessions import StringSession
 from reply_matching import correlated_kind
-from session_login import SessionLoginRequired, authorize_session, select_session
+from session_login import (
+    SESSION_DUPLICATED_MESSAGE,
+    SessionLoginRequired,
+    authorize_session,
+    report_duplicated_session,
+    select_session,
+)
 
 APP_URL = (os.environ.get("APP_URL") or "").rstrip("/")
 VERIFIER_SECRET = os.environ.get("VERIFIER_SECRET") or ""
 POLL_SECONDS = int(os.environ.get("POLL_SECONDS", "8"))
+# Wait before connecting so a previous Railway container can fully stop first;
+# two containers using one session at once makes Telegram revoke it.
+STARTUP_DELAY = int(os.environ.get("STARTUP_DELAY_SECONDS", "20"))
 REPLY_TIMEOUT = int(os.environ.get("REPLY_TIMEOUT", "90"))
 QUERY_TEMPLATE = os.environ.get("AFFILIATE_QUERY_TEMPLATE", "{id}")
 
@@ -258,8 +269,18 @@ async def verify_loop(api: Api, client: TelegramClient, cfg: dict):
         await asyncio.sleep(POLL_SECONDS)
 
 
+async def idle_forever(message: str):
+    """Stay up without touching Telegram so Railway does not restart-loop."""
+    while True:
+        LOG(message)
+        await asyncio.sleep(600)
+
+
 async def main():
     LOG(f"Helper starting — app {APP_URL}")
+    if STARTUP_DELAY > 0:
+        LOG(f"Waiting {STARTUP_DELAY}s so any previous deployment can stop first.")
+        await asyncio.sleep(STARTUP_DELAY)
     async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as http:
         api = Api(http)
         while True:
@@ -291,7 +312,12 @@ async def main():
                 LOG("Telegram authorized — auto-verification starting with saved session.")
                 await verify_loop(api, client, cfg)
             except SessionLoginRequired as error:
-                raise SystemExit(str(error))
+                await client.disconnect()
+                await idle_forever(str(error))
+            except AuthKeyDuplicatedError:
+                await client.disconnect()
+                await report_duplicated_session(api)
+                await idle_forever(SESSION_DUPLICATED_MESSAGE)
             except Exception as error:
                 LOG(f"Connection interrupted ({type(error).__name__}); reconnecting in 10 seconds.")
             finally:
@@ -299,5 +325,20 @@ async def main():
             await asyncio.sleep(10)
 
 
+async def run():
+    task = asyncio.current_task()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            # Railway sends SIGTERM on redeploy: disconnect cleanly right away.
+            loop.add_signal_handler(sig, task.cancel)
+        except (NotImplementedError, RuntimeError):
+            pass
+    try:
+        await main()
+    except asyncio.CancelledError:
+        LOG("Stopping helper (deployment replaced).")
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(run())

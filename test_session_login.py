@@ -2,7 +2,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
-from session_login import SessionLoginRequired, authorize_session, select_session
+from session_login import SessionLoginRequired, authorize_session, report_duplicated_session, select_session
 
 
 class SessionLoginTests(unittest.IsolatedAsyncioTestCase):
@@ -37,6 +37,11 @@ class SessionLoginTests(unittest.IsolatedAsyncioTestCase):
         login = AsyncMock()
         await authorize_session(api, client, {}, None, False, login)
         login.assert_awaited_once_with(api, client, {})
+
+    async def test_duplicated_session_is_cleared_and_marked_for_restart(self):
+        api = SimpleNamespace(post_bridge=AsyncMock())
+        await report_duplicated_session(api)
+        api.post_bridge.assert_awaited_once_with({"session_string": None, "status": "restart_needed"})
 
 
 if __name__ == "__main__":

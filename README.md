@@ -1,4 +1,21 @@
-# Pocket Option auto-verification helper (Railway) — v5
+# Pocket Option auto-verification helper (Railway) — v6
+
+## If Railway shows `AuthKeyDuplicatedError`
+
+Telegram saw the same `TG_SESSION` used from two places at once (for example an
+old Railway container still running during a redeploy, a second service or
+replica, or the session also running on your computer). Telegram then kills that
+session permanently — it cannot be fixed by restarting.
+
+1. In Railway make sure only ONE service runs this helper, with 1 replica.
+   Delete any older helper services/projects.
+2. Generate a NEW session with `python generate_session.py` (steps below).
+3. Replace `TG_SESSION` in Railway Variables with the new value and redeploy.
+
+v6 prevents this on redeploys: it waits 20 seconds at start-up so the old
+container can stop, disconnects immediately when Railway stops it, and
+`railway.json` sets 1 replica with no deployment overlap. If the error still
+happens, the helper stops retrying and tells you to generate a new session.
 
 ## Recommended: saved Telegram session (no code on redeploy)
 
