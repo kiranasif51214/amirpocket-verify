@@ -1,4 +1,47 @@
-# Pocket Option auto-verification helper (Railway) — v4
+# Pocket Option auto-verification helper (Railway) — v5
+
+## Recommended: saved Telegram session (no code on redeploy)
+
+This version accepts `TG_SESSION` in Railway Variables. It takes priority over
+the session saved in the app, survives Railway redeployments, and never requests
+a login code when that variable is set. Telegram can revoke or expire sessions;
+no Telegram session can be guaranteed to last forever.
+
+1. On your own computer, install Python 3.12 or later and extract this package.
+2. Open a terminal in the extracted folder and run:
+
+   ```sh
+   python -m pip install -r requirements.txt
+   python generate_session.py
+   ```
+
+3. Enter your app URL and the matching `VERIFIER_SECRET` when prompted.
+   The helper reads the existing Telegram API settings from your app securely.
+4. On your signed-in phone open Telegram → Settings → Devices → Link Desktop
+   Device, then scan the QR code shown in your local terminal. If Telegram asks
+   for your two-step verification password, enter it locally when prompted.
+   This uses QR approval, not a delivered login code.
+5. The script saves `tg-session.txt` privately on your computer. If that file
+   already exists, move or delete it before generating another session.
+6. In Railway → service → Variables add `TG_SESSION` with the entire file contents.
+   Keep `APP_URL=https://pocket-trader-gatekeeper.lovable.app` and your existing
+   `VERIFIER_SECRET` unchanged. Then delete the local session file.
+7. Replace the deployed helper files with this package and redeploy. Run only
+   one service with one replica for this Telegram session. Do not run the same
+   session on another computer or helper at the same time.
+8. Railway should show `Telegram authorized — auto-verification starting with saved session.`
+   Send a Trader ID to @AmirfxPO_bot and check that the bot returns the partner result.
+
+`TG_SESSION` gives access to your Telegram account: never paste it into chat,
+commit it, share the QR code, or upload `tg-session.txt` with your source files.
+If Railway says it is invalid/expired/revoked, generate a new session and replace
+the variable. Temporary connection failures reconnect automatically. If Telegram
+reports `AuthKeyDuplicatedError`, stop duplicate workers and generate a new session.
+
+Tests: `python -m unittest discover -v`.
+Live Railway login and verification still require your QR approval and redeployment.
+
+## Optional fallback: login by code (without TG_SESSION)
 
 ## Updating your existing Railway service
 
@@ -65,6 +108,9 @@ about a minute.
 
 - `bot.py` — the helper
 - `reply_matching.py` — fresh-reply and Trader ID matching rules
+- `session_login.py` — saved-session authorization rules
+- `generate_session.py` — local, private QR session generator
+- `test_session_login.py` — saved-session and redeployment regression checks
 - `test_reply_matching.py` — regression checks (run `python -m unittest`)
 - `requirements.txt` — Python packages
 - `Dockerfile` — build instructions for Railway

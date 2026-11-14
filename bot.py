@@ -14,6 +14,7 @@ Required environment variables on Railway:
   VERIFIER_SECRET The same value saved in the app's secrets. Shared secret.
 
 Optional:
+  TG_SESSION               Telethon StringSession; skips code login on restarts.
   AFFILIATE_QUERY_TEMPLATE  Message template sent to the affiliate bot.
                             {id} is replaced with the trader ID.
                             Default: "{id}"
@@ -35,6 +36,7 @@ from telethon.errors import (
 )
 from telethon.sessions import StringSession
 from reply_matching import correlated_kind
+from session_login import SessionLoginRequired, authorize_session, select_session
 
 APP_URL = (os.environ.get("APP_URL") or "").rstrip("/")
 VERIFIER_SECRET = os.environ.get("VERIFIER_SECRET") or ""
@@ -70,8 +72,9 @@ class Api:
 
     async def post_bridge(self, payload: dict) -> None:
         async with self.http.post(BRIDGE_URL, headers=HEADERS, json=payload) as r:
-            if r.status >= 400:
-                LOG(f"bridge POST failed [{r.status}]: {await r.text()}")
+            if r.status == 401:
+                raise SystemExit("VERIFIER_SECRET does not match the app's VERIFIER_SECRET.")
+            r.raise_for_status()
 
     async def pending(self) -> list[dict]:
         async with self.http.get(PENDING_URL, headers=HEADERS) as r:
@@ -133,7 +136,7 @@ async def login_flow(api: Api, client: TelegramClient, cfg: dict):
     while True:
         try:
             await client.send_code_request(phone)
-            LOG(f"Login code requested for {phone}")
+            LOG("Telegram login code requested; check Telegram on your signed-in devices.")
             break
         except Exception as e:  # noqa: BLE001
             LOG(f"send_code_request failed: {e}")
@@ -275,29 +278,24 @@ async def main():
                 await asyncio.sleep(30)
                 continue
 
-            session_string = cfg.get("session_string") or None
-            client = TelegramClient(
-                StringSession(session_string), int(cfg["api_id"]), cfg["api_hash"]
-            )
-            await client.connect()
-
-            if not await client.is_user_authorized():
-                if session_string:
-                    LOG("Saved session is not valid — logging in again.")
-                    await api.post_bridge({"session_string": None, "status": "restart_needed"})
-                await login_flow(api, client, cfg)
-            else:
-                LOG(f"Logged in with saved session ({(await client.get_me()).first_name}).")
-                if not session_string:
-                    await api.post_bridge(
-                        {"session_string": client.session.save(), "status": "running"}
-                    )
-                else:
-                    await api.post_bridge({"status": "running"})
-
-            await verify_loop(api, client, cfg)
-
-            await client.disconnect()
+            session_string, explicit = select_session(cfg, os.environ)
+            try:
+                session = StringSession(session_string)
+            except (ValueError, TypeError):
+                await api.post_bridge({"status": "restart_needed"})
+                raise SystemExit("Invalid saved Telegram session. Replace TG_SESSION with a Telethon StringSession.")
+            client = TelegramClient(session, int(cfg["api_id"]), cfg["api_hash"])
+            try:
+                await client.connect()
+                await authorize_session(api, client, cfg, session_string, explicit, login_flow)
+                LOG("Telegram authorized — auto-verification starting with saved session.")
+                await verify_loop(api, client, cfg)
+            except SessionLoginRequired as error:
+                raise SystemExit(str(error))
+            except Exception as error:
+                LOG(f"Connection interrupted ({type(error).__name__}); reconnecting in 10 seconds.")
+            finally:
+                await client.disconnect()
             await asyncio.sleep(10)
 
 
